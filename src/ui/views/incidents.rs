@@ -356,8 +356,8 @@ pub fn render_incidents_view(
     });
 }
 
-pub fn sort_incident_refs<'a>(
-    list: &mut [&'a HubIncident],
+pub fn sort_incident_refs(
+    list: &mut [&HubIncident],
     col: IncidentSortColumn,
     dir: SortDirection,
 ) {
@@ -389,10 +389,10 @@ pub fn sort_incident_refs<'a>(
             list.sort_by(|a, b| b.port.cmp(&a.port).then_with(|| b.service.cmp(&a.service)));
         }
         (IncidentSortColumn::Threat, SortDirection::Ascending) => {
-            list.sort_by(|a, b| a.threat_score.cmp(&b.threat_score));
+            list.sort_by_key(|a| a.threat_score);
         }
         (IncidentSortColumn::Threat, SortDirection::Descending) => {
-            list.sort_by(|a, b| b.threat_score.cmp(&a.threat_score));
+            list.sort_by_key(|a| std::cmp::Reverse(a.threat_score));
         }
     }
 }

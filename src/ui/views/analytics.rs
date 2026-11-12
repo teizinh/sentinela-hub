@@ -99,7 +99,7 @@ pub fn render_analytics_view(
                         }
 
                         let mut sorted_services: Vec<(String, usize)> = service_counts.into_iter().collect();
-                        sorted_services.sort_by(|a, b| b.1.cmp(&a.1));
+                        sorted_services.sort_by_key(|a| std::cmp::Reverse(a.1));
 
                         if sorted_services.is_empty() {
                             ui.label(

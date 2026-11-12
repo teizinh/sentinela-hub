@@ -7,6 +7,7 @@ use crate::ui::sidebar::render_sidebar;
 use crate::ui::views::analytics::render_analytics_view;
 use crate::ui::views::correlations::render_correlations_view;
 use crate::ui::views::incidents::render_incidents_view;
+use crate::ui::views::map::ActiveAttackArc;
 use crate::ui::{apply_cyber_theme, COLOR_ACCENT_GREEN, COLOR_PANEL_BG};
 use egui::{RichText, Stroke};
 use std::sync::mpsc::Receiver;
@@ -20,6 +21,7 @@ pub struct HubApp {
     incidents: Vec<HubIncident>,
     correlations: Vec<CorrelationAlert>,
     top_attackers: Vec<(String, usize, u8, String)>,
+    active_arcs: Vec<ActiveAttackArc>,
     current_tab: ViewTab,
     search_query: String,
     selected_severity: String,
@@ -49,6 +51,24 @@ impl HubApp {
         }
         let correlations = correlation_engine.get_active_correlations();
 
+        // Seed up to 10 historical attack trajectories with staggered offsets
+        let mut active_arcs = Vec::new();
+        let seed_count = incidents.len().min(10);
+        for (i, inc) in incidents.iter().take(seed_count).enumerate() {
+            let target_geo = nodes
+                .iter()
+                .find(|n| n.id == inc.node_id)
+                .map(crate::ui::views::map::resolve_node_coordinates)
+                .unwrap_or_else(crate::ui::views::map::default_target_coordinates);
+            let offset = Duration::from_millis((i as u64) * 600);
+            let created_at = Instant::now().checked_sub(offset).unwrap_or_else(Instant::now);
+            active_arcs.push(ActiveAttackArc::from_incident(
+                inc.clone(),
+                target_geo,
+                created_at,
+            ));
+        }
+
         Self {
             db,
             event_rx,
@@ -57,6 +77,7 @@ impl HubApp {
             incidents,
             correlations,
             top_attackers,
+            active_arcs,
             current_tab: ViewTab::Incidents,
             search_query: String::new(),
             selected_severity: "TODAS".to_string(),
@@ -76,6 +97,27 @@ impl HubApp {
             self.top_attackers = attackers;
         }
     }
+
+    fn seed_arcs_if_empty(&mut self) {
+        if self.active_arcs.is_empty() && !self.incidents.is_empty() {
+            let seed_count = self.incidents.len().min(10);
+            for (i, inc) in self.incidents.iter().take(seed_count).enumerate() {
+                let target_geo = self
+                    .nodes
+                    .iter()
+                    .find(|n| n.id == inc.node_id)
+                    .map(crate::ui::views::map::resolve_node_coordinates)
+                    .unwrap_or_else(crate::ui::views::map::default_target_coordinates);
+                let offset = Duration::from_millis((i as u64) * 600);
+                let created_at = Instant::now().checked_sub(offset).unwrap_or_else(Instant::now);
+                self.active_arcs.push(ActiveAttackArc::from_incident(
+                    inc.clone(),
+                    target_geo,
+                    created_at,
+                ));
+            }
+        }
+    }
 }
 
 impl eframe::App for HubApp {
@@ -88,6 +130,21 @@ impl eframe::App for HubApp {
             match event {
                 HubEvent::NewIncident(inc) => {
                     self.correlation_engine.process_incident(&inc);
+                    let target_geo = self
+                        .nodes
+                        .iter()
+                        .find(|n| n.id == inc.node_id)
+                        .map(crate::ui::views::map::resolve_node_coordinates)
+                        .unwrap_or_else(crate::ui::views::map::default_target_coordinates);
+                    let arc = ActiveAttackArc::from_incident(
+                        inc.clone(),
+                        target_geo,
+                        Instant::now(),
+                    );
+                    self.active_arcs.push(arc);
+                    if self.active_arcs.len() > 100 {
+                        self.active_arcs.remove(0);
+                    }
                     self.incidents.insert(0, inc);
                     if self.incidents.len() > 1000 {
                         self.incidents.truncate(1000);
@@ -172,7 +229,15 @@ impl eframe::App for HubApp {
                     );
                 }
                 ViewTab::ThreatMap => {
-                    ui.label("Threat map view placeholder");
+                    self.seed_arcs_if_empty();
+                    crate::ui::views::map::render_threat_map_view(
+                        ui,
+                        &self.nodes,
+                        &self.incidents,
+                        &mut self.active_arcs,
+                        &mut self.selected_node,
+                        &mut self.selected_incident,
+                    );
                 }
                 ViewTab::Correlations => {
                     render_correlations_view(ui, &self.correlations, &mut self.toast_msg);
