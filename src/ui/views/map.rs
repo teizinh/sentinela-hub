@@ -1,4 +1,10 @@
 use crate::models::{AgentNode, HubIncident};
+use crate::ui::views::map_data::get_continent_outlines;
+use crate::ui::{
+    render_severity_pill, severity_color, COLOR_ACCENT_AMBER, COLOR_ACCENT_CYAN,
+    COLOR_ACCENT_GREEN, COLOR_BORDER, COLOR_TEXT_MUTED,
+};
+use egui::{Color32, RichText, Stroke};
 use std::time::{Duration, Instant};
 
 /// Country centroid table mapping lowercase country codes and names to (latitude, longitude).
@@ -373,6 +379,423 @@ impl ActiveAttackArc {
             1.0
         }
     }
+
+    /// Creates an `ActiveAttackArc` directly from an incident and target coordinates.
+    pub fn from_incident(
+        incident: HubIncident,
+        target_geo: (f32, f32),
+        created_at: Instant,
+    ) -> Self {
+        let origin_geo = resolve_coordinates(&incident.country, &incident.city, &incident.ip);
+        Self {
+            incident,
+            origin_geo,
+            target_geo,
+            start_pos: egui::Pos2::ZERO,
+            end_pos: egui::Pos2::ZERO,
+            ctrl_pos: egui::Pos2::ZERO,
+            created_at,
+            flight_duration: Duration::from_millis(2200),
+        }
+    }
+}
+
+/// Inverts screen canvas coordinates back to equirectangular geographic coordinates (lat, lon).
+pub fn screen_to_geo(pos: egui::Pos2, rect: egui::Rect) -> (f32, f32) {
+    if rect.width() <= 0.0 || rect.height() <= 0.0 {
+        return (0.0, 0.0);
+    }
+    let norm_x = ((pos.x - rect.min.x) / rect.width()).clamp(0.0, 1.0);
+    let norm_y = ((pos.y - rect.min.y) / rect.height()).clamp(0.0, 1.0);
+    let lon = norm_x * 360.0 - 180.0;
+    let lat = 90.0 - norm_y * 180.0;
+    (lat, lon)
+}
+
+/// Renders the real-time 2D Threat Map view with continental silhouettes,
+/// animated Bezier attack arcs, glowing target beacons, and live HUD overlay.
+pub fn render_threat_map_view(
+    ui: &mut egui::Ui,
+    nodes: &[AgentNode],
+    incidents: &[HubIncident],
+    arcs: &mut Vec<ActiveAttackArc>,
+    selected_node: &mut Option<String>,
+    modal_incident: &mut Option<HubIncident>,
+) {
+    let now = Instant::now();
+    // 1. Prune expired arcs older than 20 seconds
+    arcs.retain(|arc| !arc.is_expired(now));
+
+    // Request continuous repaint for 60 FPS animation
+    ui.ctx().request_repaint();
+
+    // 2. Allocate interactive painter canvas
+    let available = ui.available_size_before_wrap();
+    let (response, painter) = ui.allocate_painter(available, egui::Sense::click());
+    let rect = response.rect;
+
+    if rect.width() < 10.0 || rect.height() < 10.0 {
+        return;
+    }
+
+    // 3. Draw dark SOC canvas background
+    painter.rect_filled(rect, 4.0, Color32::from_rgb(10, 14, 20));
+
+    // 4. Draw latitude & longitude grid lines
+    // Parallels (latitudes every 30 degrees)
+    for lat in [-60.0f32, -30.0f32, 0.0f32, 30.0f32, 60.0f32] {
+        let y = rect.min.y + (90.0f32 - lat) / 180.0f32 * rect.height();
+        let stroke = if lat == 0.0f32 {
+            Stroke::new(1.0f32, Color32::from_rgba_unmultiplied(56, 189, 248, 45))
+        } else {
+            Stroke::new(0.5f32, Color32::from_rgba_unmultiplied(48, 54, 61, 60))
+        };
+        painter.line_segment([egui::pos2(rect.min.x, y), egui::pos2(rect.max.x, y)], stroke);
+    }
+    // Meridians (longitudes every 30 degrees)
+    for lon_deg in (-150..=150).step_by(30) {
+        let lon = lon_deg as f32;
+        let x = rect.min.x + (lon + 180.0f32) / 360.0f32 * rect.width();
+        let stroke = if lon_deg == 0 {
+            Stroke::new(1.0f32, Color32::from_rgba_unmultiplied(56, 189, 248, 45))
+        } else {
+            Stroke::new(0.5f32, Color32::from_rgba_unmultiplied(48, 54, 61, 60))
+        };
+        painter.line_segment([egui::pos2(x, rect.min.y), egui::pos2(x, rect.max.y)], stroke);
+    }
+
+    // 5. Draw continental silhouettes & cyber borders
+    let continent_polygons = get_continent_outlines();
+    for polygon in continent_polygons {
+        let screen_pts: Vec<egui::Pos2> = polygon
+            .iter()
+            .map(|&(lat, lon)| project_to_screen(lat, lon, rect))
+            .collect();
+        if screen_pts.len() >= 3 {
+            painter.add(egui::Shape::Path(egui::epaint::PathShape::convex_polygon(
+                screen_pts.clone(),
+                Color32::from_rgb(18, 24, 34),
+                Stroke::new(1.0f32, Color32::from_rgba_unmultiplied(56, 189, 248, 65)),
+            )));
+            painter.add(egui::Shape::Path(egui::epaint::PathShape::closed_line(
+                screen_pts,
+                Stroke::new(1.0f32, Color32::from_rgba_unmultiplied(56, 189, 248, 80)),
+            )));
+        }
+    }
+
+    // 6. Draw Target Nodes (Agent beacons with expanding radar rings)
+    let time = ui.input(|i| i.time) as f32;
+    let pulse1 = (time * 1.5f32).fract();
+    let pulse2 = (time * 1.5f32 + 0.5f32).fract();
+
+    // Default node if none registered
+    let target_nodes: Vec<(String, (f32, f32))> = if nodes.is_empty() {
+        vec![("soc-central-pt".to_string(), default_target_coordinates())]
+    } else {
+        nodes
+            .iter()
+            .map(|n| (n.name.clone(), resolve_node_coordinates(n)))
+            .collect()
+    };
+
+    for (node_name, (node_lat, node_lon)) in &target_nodes {
+        let node_pos = project_to_screen(*node_lat, *node_lon, rect);
+
+        // Radar ring 1
+        painter.circle_stroke(
+            node_pos,
+            5.0f32 + pulse1 * 20.0f32,
+            Stroke::new(
+                1.2f32,
+                Color32::from_rgba_unmultiplied(
+                    52,
+                    211,
+                    153,
+                    ((1.0f32 - pulse1) * 160.0f32) as u8,
+                ),
+            ),
+        );
+        // Radar ring 2
+        painter.circle_stroke(
+            node_pos,
+            5.0f32 + pulse2 * 20.0f32,
+            Stroke::new(
+                1.0f32,
+                Color32::from_rgba_unmultiplied(
+                    52,
+                    211,
+                    153,
+                    ((1.0f32 - pulse2) * 120.0f32) as u8,
+                ),
+            ),
+        );
+
+        // Core beacon
+        painter.circle_filled(
+            node_pos,
+            7.0f32,
+            Color32::from_rgba_unmultiplied(52, 211, 153, 50),
+        );
+        painter.circle_filled(node_pos, 4.5f32, COLOR_ACCENT_GREEN);
+        painter.circle_stroke(node_pos, 4.5f32, Stroke::new(1.5f32, Color32::WHITE));
+
+        // Node label
+        painter.text(
+            node_pos + egui::vec2(10.0f32, -8.0f32),
+            egui::Align2::LEFT_CENTER,
+            node_name,
+            egui::FontId::proportional(11.0f32),
+            COLOR_ACCENT_GREEN,
+        );
+
+        // Hit-test click on node to toggle filter
+        if response.clicked() {
+            if let Some(mouse) = response.interact_pointer_pos() {
+                if mouse.distance(node_pos) <= 16.0f32 {
+                    *selected_node = if *selected_node == Some(node_name.clone()) {
+                        None
+                    } else {
+                        Some(node_name.clone())
+                    };
+                }
+            }
+        }
+    }
+
+    // 7. Update, filter, and render active attack arcs and particles
+    for arc in arcs.iter_mut() {
+        arc.update_projection(rect);
+
+        // Filter by selected node if set
+        if let Some(filter_node) = selected_node {
+            if &arc.incident.node_id != filter_node {
+                continue;
+            }
+        }
+
+        let alpha = arc.alpha(now);
+        if alpha <= 0.0f32 {
+            continue;
+        }
+
+        let base_col = severity_color(&arc.incident.severity);
+        let arc_col = Color32::from_rgba_unmultiplied(
+            base_col.r(),
+            base_col.g(),
+            base_col.b(),
+            (alpha * 175.0f32) as u8,
+        );
+
+        // Tessellate quadratic Bezier curve
+        let num_segments = 24;
+        let mut curve_pts = Vec::with_capacity(num_segments + 1);
+        for i in 0..=num_segments {
+            let t = i as f32 / num_segments as f32;
+            curve_pts.push(quadratic_bezier(arc.start_pos, arc.ctrl_pos, arc.end_pos, t));
+        }
+        painter.add(egui::Shape::Path(egui::epaint::PathShape::line(
+            curve_pts,
+            Stroke::new(1.6f32, arc_col),
+        )));
+
+        // Origin attacker beacon
+        let origin_col = Color32::from_rgba_unmultiplied(
+            base_col.r(),
+            base_col.g(),
+            base_col.b(),
+            (alpha * 220.0f32) as u8,
+        );
+        painter.circle_filled(arc.start_pos, 3.5f32, origin_col);
+        painter.circle_stroke(arc.start_pos, 3.5f32, Stroke::new(1.0f32, Color32::WHITE));
+
+        // Local Wi-Fi / RFC 1918 indicator
+        if is_rfc1918(&arc.incident.ip) {
+            painter.circle_stroke(
+                arc.start_pos,
+                7.0f32,
+                Stroke::new(1.0f32, COLOR_ACCENT_CYAN),
+            );
+            painter.text(
+                arc.start_pos + egui::vec2(9.0f32, -4.0f32),
+                egui::Align2::LEFT_CENTER,
+                "LAN/Wi-Fi",
+                egui::FontId::proportional(9.0f32),
+                COLOR_ACCENT_CYAN,
+            );
+        }
+
+        // Flying particle with glow head
+        if let Some(pos) = arc.particle_pos(now) {
+            painter.circle_filled(
+                pos,
+                5.0f32,
+                Color32::from_rgba_unmultiplied(base_col.r(), base_col.g(), base_col.b(), 100),
+            );
+            painter.circle_filled(pos, 2.5f32, Color32::WHITE);
+        }
+
+        // Interactive click on origin beacon
+        if response.clicked() {
+            if let Some(mouse) = response.interact_pointer_pos() {
+                if mouse.distance(arc.start_pos) <= 12.0f32 {
+                    *modal_incident = Some(arc.incident.clone());
+                }
+            }
+        }
+    }
+
+    // 8. Live Attacks HUD Overlay in bottom-left
+    let hud_width = 370.0f32.min(rect.width() * 0.45f32);
+    let hud_height = 200.0f32.min(rect.height() * 0.45f32);
+    let hud_rect = egui::Rect::from_min_size(
+        egui::pos2(rect.min.x + 16.0f32, rect.max.y - hud_height - 16.0f32),
+        egui::vec2(hud_width, hud_height),
+    );
+
+    ui.allocate_ui_at_rect(hud_rect, |ui| {
+        egui::Frame::none()
+            .fill(Color32::from_rgba_unmultiplied(22, 27, 34, 235))
+            .stroke(Stroke::new(1.0f32, COLOR_BORDER))
+            .rounding(8.0f32)
+            .inner_margin(10.0f32)
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label(
+                        RichText::new("⚡ ATAQUES EM TEMPO REAL")
+                            .size(11.0f32)
+                            .strong()
+                            .color(COLOR_ACCENT_CYAN),
+                    );
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.label(
+                            RichText::new(format!("{} ATIVOS", arcs.len()))
+                                .size(10.0f32)
+                                .color(COLOR_TEXT_MUTED),
+                        );
+                    });
+                });
+                ui.separator();
+
+                egui::ScrollArea::vertical()
+                    .id_source("map_hud_feed")
+                    .show(ui, |ui| {
+                        let feed = incidents.iter().take(5);
+                        for inc in feed {
+                            ui.horizontal(|ui| {
+                                render_severity_pill(ui, &inc.severity);
+                                let resp = ui.selectable_label(
+                                    false,
+                                    RichText::new(&inc.ip)
+                                        .size(11.0f32)
+                                        .monospace()
+                                        .color(Color32::WHITE),
+                                );
+                                if resp.clicked() {
+                                    *modal_incident = Some(inc.clone());
+                                }
+                                ui.label(
+                                    RichText::new(format!(":{} {}", inc.port, inc.service))
+                                        .size(10.0f32)
+                                        .color(COLOR_TEXT_MUTED),
+                                );
+                                ui.with_layout(
+                                    egui::Layout::right_to_left(egui::Align::Center),
+                                    |ui| {
+                                        if ui
+                                            .small_button("🔬")
+                                            .on_hover_text("Abrir Raio-X Forense")
+                                            .clicked()
+                                        {
+                                            *modal_incident = Some(inc.clone());
+                                        }
+                                    },
+                                );
+                            });
+                        }
+                    });
+            });
+    });
+
+    // 9. Status HUD / Legend in top-right
+    let legend_rect = egui::Rect::from_min_size(
+        egui::pos2(rect.max.x - 210.0f32, rect.min.y + 16.0f32),
+        egui::vec2(194.0f32, 95.0f32),
+    );
+    ui.allocate_ui_at_rect(legend_rect, |ui| {
+        egui::Frame::none()
+            .fill(Color32::from_rgba_unmultiplied(22, 27, 34, 220))
+            .stroke(Stroke::new(1.0f32, COLOR_BORDER))
+            .rounding(6.0f32)
+            .inner_margin(8.0f32)
+            .show(ui, |ui| {
+                ui.label(
+                    RichText::new("🗺️ THREAT MAP")
+                        .size(10.0f32)
+                        .strong()
+                        .color(COLOR_ACCENT_GREEN),
+                );
+                ui.separator();
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new("🟢 SOC Beacons:").size(10.0f32).color(COLOR_TEXT_MUTED));
+                    ui.label(
+                        RichText::new(format!("{}", nodes.len().max(1)))
+                            .size(10.0f32)
+                            .strong()
+                            .color(Color32::WHITE),
+                    );
+                });
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new("⚡ Trajetórias:").size(10.0f32).color(COLOR_TEXT_MUTED));
+                    ui.label(
+                        RichText::new(format!("{}", arcs.len()))
+                            .size(10.0f32)
+                            .strong()
+                            .color(COLOR_ACCENT_AMBER),
+                    );
+                });
+                if let Some(hover) = response.hover_pos() {
+                    let (lat, lon) = screen_to_geo(hover, rect);
+                    ui.label(
+                        RichText::new(format!("🌐 {:.1}°, {:.1}°", lat, lon))
+                            .size(9.0f32)
+                            .monospace()
+                            .color(COLOR_ACCENT_CYAN),
+                    );
+                }
+            });
+    });
+
+    // 10. Node Filter indicator in top-left (if active)
+    let mut clear_node_filter = false;
+    if let Some(node_name) = selected_node.clone() {
+        let filter_rect = egui::Rect::from_min_size(
+            egui::pos2(rect.min.x + 16.0f32, rect.min.y + 16.0f32),
+            egui::vec2(220.0f32, 36.0f32),
+        );
+        ui.allocate_ui_at_rect(filter_rect, |ui| {
+            egui::Frame::none()
+                .fill(Color32::from_rgba_unmultiplied(22, 27, 34, 230))
+                .stroke(Stroke::new(1.0f32, COLOR_ACCENT_GREEN))
+                .rounding(6.0f32)
+                .inner_margin(6.0f32)
+                .show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.label(
+                            RichText::new(format!("Filtro: {}", node_name))
+                                .size(11.0f32)
+                                .color(COLOR_ACCENT_GREEN),
+                        );
+                        if ui.small_button("✕").on_hover_text("Limpar Filtro").clicked() {
+                            clear_node_filter = true;
+                        }
+                    });
+                });
+        });
+    }
+    if clear_node_filter {
+        *selected_node = None;
+    }
 }
 
 #[cfg(test)]
@@ -546,5 +969,47 @@ mod tests {
         let t_exp = t0 + Duration::from_secs(21);
         assert!(arc.is_expired(t_exp));
         assert_eq!(arc.alpha(t_exp), 0.0);
+    }
+
+    #[test]
+    fn test_screen_to_geo_invertibility() {
+        let rect = egui::Rect::from_min_size(egui::pos2(100.0, 50.0), egui::vec2(800.0, 400.0));
+
+        let original_coords = [(0.0, 0.0), (39.5, -8.0), (-33.86, 151.2), (51.16, 10.45)];
+        for &(lat, lon) in &original_coords {
+            let screen_pos = project_to_screen(lat, lon, rect);
+            let (inv_lat, inv_lon) = screen_to_geo(screen_pos, rect);
+            assert!((inv_lat - lat).abs() < 1e-2, "Lat inversion mismatch: {} vs {}", inv_lat, lat);
+            assert!((inv_lon - lon).abs() < 1e-2, "Lon inversion mismatch: {} vs {}", inv_lon, lon);
+        }
+    }
+
+    #[test]
+    fn test_active_attack_arc_from_incident() {
+        let incident = HubIncident {
+            id: Some(3),
+            node_id: "soc-central-pt".to_string(),
+            timestamp: "2026-11-12 18:30:00".to_string(),
+            ip: "185.220.101.5".to_string(),
+            port: 22,
+            service: "SSH".to_string(),
+            severity: "CRÍTICO".to_string(),
+            country: "Germany".to_string(),
+            city: "Frankfurt".to_string(),
+            isp: "Tor Exit Node".to_string(),
+            rdns: None,
+            payload: None,
+            threat_score: 95,
+            hit_count: 12,
+        };
+
+        let t0 = Instant::now();
+        let mut arc = ActiveAttackArc::from_incident(incident, (39.5, -8.0), t0);
+        let rect = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(1000.0, 500.0));
+        arc.update_projection(rect);
+
+        assert!(arc.start_pos.x > 0.0 && arc.start_pos.x < 1000.0);
+        assert!(arc.end_pos.x > 0.0 && arc.end_pos.x < 1000.0);
+        assert!(arc.ctrl_pos.y < (arc.start_pos.y + arc.end_pos.y) * 0.5);
     }
 }
