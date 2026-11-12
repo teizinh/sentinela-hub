@@ -41,3 +41,17 @@ pub fn severity_color(severity: &str) -> Color32 {
         _ => COLOR_TEXT_MUTED,
     }
 }
+
+pub fn render_severity_pill(ui: &mut egui::Ui, severity: &str) {
+    let color = severity_color(severity);
+    let bg = Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), 35);
+    egui::Frame::none()
+        .fill(bg)
+        .stroke(Stroke::new(1.0f32, color))
+        .rounding(10.0f32)
+        .inner_margin(egui::vec2(8.0f32, 2.0f32))
+        .show(ui, |ui| {
+            ui.label(egui::RichText::new(severity).size(10.0f32).strong().color(color));
+        });
+}
+
