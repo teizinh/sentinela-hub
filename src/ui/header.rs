@@ -19,6 +19,7 @@ pub fn render_header(
     incident_count: usize,
     correlation_count: usize,
     server_addr: &str,
+    export_report: &mut bool,
 ) {
     egui::Frame::none()
         .fill(COLOR_PANEL_BG)
@@ -145,6 +146,21 @@ pub fn render_header(
                 ) {
                     *current_tab = ViewTab::Analytics;
                 }
+
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui
+                        .button(
+                            RichText::new("📄 Relatório SOC")
+                                .size(11.0f32)
+                                .strong()
+                                .color(COLOR_ACCENT_GREEN),
+                        )
+                        .on_hover_text("Exportar Relatório Executivo SOC em Markdown")
+                        .clicked()
+                    {
+                        *export_report = true;
+                    }
+                });
             });
         });
 }

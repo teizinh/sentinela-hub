@@ -133,7 +133,7 @@ pub fn export_executive_report(
         report.push_str("*Nenhuma técnica MITRE ATT&CK® identificada no período.*\n\n");
     } else {
         let mut mitre_list: Vec<_> = mitre_map.into_iter().collect();
-        mitre_list.sort_by(|a, b| b.1.cmp(&a.1));
+        mitre_list.sort_by_key(|a| std::cmp::Reverse(a.1));
 
         report.push_str("| ID Técnica | Nome da Técnica MITRE | Tentativas Observadas | Nível de Risco SOC |\n");
         report.push_str("|---|---|---|---|\n");

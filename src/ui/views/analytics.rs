@@ -15,7 +15,7 @@ pub fn parse_timestamp_hour(ts: &str) -> Option<u32> {
     if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(ts) {
         return Some(chrono::Timelike::hour(&dt));
     }
-    let parts: Vec<&str> = ts.split(|c| c == ' ' || c == 'T').collect();
+    let parts: Vec<&str> = ts.split([' ', 'T']).collect();
     if parts.len() >= 2 {
         let time_parts: Vec<&str> = parts[1].split(':').collect();
         if let Some(h_str) = time_parts.first() {

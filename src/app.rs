@@ -30,6 +30,7 @@ pub struct HubApp {
     server_addr: String,
     toast_msg: Option<(String, Instant)>,
     last_db_refresh: Instant,
+    last_critical_alert: Option<Instant>,
 }
 
 impl HubApp {
@@ -86,6 +87,7 @@ impl HubApp {
             server_addr,
             toast_msg: None,
             last_db_refresh: Instant::now(),
+            last_critical_alert: None,
         }
     }
 
@@ -145,6 +147,9 @@ impl eframe::App for HubApp {
                     if self.active_arcs.len() > 100 {
                         self.active_arcs.remove(0);
                     }
+                    if inc.severity.to_uppercase() == "CRÍTICO" || inc.severity.to_uppercase() == "CRITICO" {
+                        self.last_critical_alert = Some(Instant::now());
+                    }
                     self.incidents.insert(0, inc);
                     if self.incidents.len() > 1000 {
                         self.incidents.truncate(1000);
@@ -169,6 +174,7 @@ impl eframe::App for HubApp {
         }
 
         // Header Panel
+        let mut export_report = false;
         egui::TopBottomPanel::top("top_header").show(ctx, |ui| {
             render_header(
                 ui,
@@ -177,8 +183,22 @@ impl eframe::App for HubApp {
                 self.incidents.len(),
                 self.correlations.len(),
                 &self.server_addr,
+                &mut export_report,
             );
         });
+
+        if export_report {
+            let report = crate::ui::report::export_executive_report(&self.incidents, &self.correlations);
+            let dir = std::path::Path::new("/home/salvadorpontes/.local/share/sentinela-hub");
+            let _ = std::fs::create_dir_all(dir);
+            let file_path = dir.join("relatorio_soc.md");
+            let _ = std::fs::write(&file_path, &report);
+            ctx.output_mut(|o| o.copied_text = report);
+            self.toast_msg = Some((
+                "Relatório Executivo SOC exportado e copiado para o clipboard!".to_string(),
+                Instant::now(),
+            ));
+        }
 
         // Toast notification banner
         if let Some((msg, created_at)) = &self.toast_msg {
@@ -254,6 +274,27 @@ impl eframe::App for HubApp {
             crate::ui::modal::render_raio_x_modal(ctx, inc, &mut close, &mut self.toast_msg);
             if close {
                 self.selected_incident = None;
+            }
+        }
+
+        // Screen alarm vignette if a critical incident arrived recently (< 4 seconds)
+        if let Some(t_crit) = self.last_critical_alert {
+            let elapsed = t_crit.elapsed().as_secs_f32();
+            if elapsed < 4.0f32 {
+                let intensity = (4.0f32 - elapsed) / 4.0f32
+                    * ((ctx.input(|i| i.time) as f32 * 5.0f32).sin() * 0.35f32 + 0.65f32);
+                let painter = ctx.layer_painter(egui::LayerId::new(
+                    egui::Order::Foreground,
+                    egui::Id::new("alarm_vignette"),
+                ));
+                crate::ui::render_alarm_vignette(
+                    &painter,
+                    ctx.screen_rect(),
+                    intensity.clamp(0.0f32, 1.0f32),
+                );
+                ctx.request_repaint();
+            } else {
+                self.last_critical_alert = None;
             }
         }
     }
