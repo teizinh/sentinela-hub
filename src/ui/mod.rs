@@ -1,5 +1,6 @@
 pub mod header;
 pub mod modal;
+pub mod report;
 pub mod sidebar;
 pub mod views;
 
@@ -54,4 +55,134 @@ pub fn render_severity_pill(ui: &mut egui::Ui, severity: &str) {
             ui.label(egui::RichText::new(severity).size(10.0f32).strong().color(color));
         });
 }
+
+/// Renders a subtle pulsating red gradient vignette along the four borders of `rect`
+/// when `intensity > 0.0f32` (e.g. after a CRÍTICO incident arrived recently)
+/// to notify the SOC analyst visually.
+pub fn render_alarm_vignette(painter: &egui::Painter, rect: egui::Rect, intensity: f32) {
+    if intensity <= 0.0 || rect.width() <= 0.0 || rect.height() <= 0.0 {
+        return;
+    }
+
+    let clamped = intensity.clamp(0.0, 1.0);
+    // Depth of the vignette inwards from the edges
+    let border_depth = (rect.height().min(rect.width()) * 0.08).clamp(16.0, 50.0);
+
+    let max_alpha = (clamped * 180.0) as u8;
+    if max_alpha == 0 {
+        return;
+    }
+
+    let outer_col = Color32::from_rgba_unmultiplied(239, 68, 68, max_alpha);
+    let inner_col = Color32::from_rgba_unmultiplied(239, 68, 68, 0);
+
+    let mut mesh = egui::Mesh::default();
+
+    let p0 = egui::pos2(rect.min.x, rect.min.y);
+    let p1 = egui::pos2(rect.max.x, rect.min.y);
+    let p2 = egui::pos2(rect.max.x, rect.max.y);
+    let p3 = egui::pos2(rect.min.x, rect.max.y);
+
+    let p4 = egui::pos2(rect.min.x + border_depth, rect.min.y + border_depth);
+    let p5 = egui::pos2(rect.max.x - border_depth, rect.min.y + border_depth);
+    let p6 = egui::pos2(rect.max.x - border_depth, rect.max.y - border_depth);
+    let p7 = egui::pos2(rect.min.x + border_depth, rect.max.y - border_depth);
+
+    let uv = egui::epaint::WHITE_UV;
+
+    mesh.vertices.push(egui::epaint::Vertex {
+        pos: p0,
+        uv,
+        color: outer_col,
+    });
+    mesh.vertices.push(egui::epaint::Vertex {
+        pos: p1,
+        uv,
+        color: outer_col,
+    });
+    mesh.vertices.push(egui::epaint::Vertex {
+        pos: p2,
+        uv,
+        color: outer_col,
+    });
+    mesh.vertices.push(egui::epaint::Vertex {
+        pos: p3,
+        uv,
+        color: outer_col,
+    });
+
+    mesh.vertices.push(egui::epaint::Vertex {
+        pos: p4,
+        uv,
+        color: inner_col,
+    });
+    mesh.vertices.push(egui::epaint::Vertex {
+        pos: p5,
+        uv,
+        color: inner_col,
+    });
+    mesh.vertices.push(egui::epaint::Vertex {
+        pos: p6,
+        uv,
+        color: inner_col,
+    });
+    mesh.vertices.push(egui::epaint::Vertex {
+        pos: p7,
+        uv,
+        color: inner_col,
+    });
+
+    // Top trapezoid: 0, 1, 5, 4
+    mesh.add_triangle(0, 1, 5);
+    mesh.add_triangle(0, 5, 4);
+
+    // Right trapezoid: 1, 2, 6, 5
+    mesh.add_triangle(1, 2, 6);
+    mesh.add_triangle(1, 6, 5);
+
+    // Bottom trapezoid: 3, 6, 2 and 3, 7, 6
+    mesh.add_triangle(3, 6, 2);
+    mesh.add_triangle(3, 7, 6);
+
+    // Left trapezoid: 0, 4, 7 and 0, 7, 3
+    mesh.add_triangle(0, 4, 7);
+    mesh.add_triangle(0, 7, 3);
+
+    painter.add(egui::Shape::Mesh(mesh));
+
+    // Outer subtle boundary stroke
+    let stroke_alpha = (clamped * 200.0f32) as u8;
+    painter.rect_stroke(
+        rect,
+        0.0f32,
+        Stroke::new(1.5f32, Color32::from_rgba_unmultiplied(239, 68, 68, stroke_alpha)),
+    );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_render_alarm_vignette() {
+        let ctx = egui::Context::default();
+        let _ = ctx.run(Default::default(), |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| {
+                let rect = egui::Rect::from_min_size(
+                    egui::pos2(0.0, 0.0),
+                    egui::vec2(800.0, 600.0),
+                );
+                let painter = ui.painter();
+                // Test intensity <= 0.0 does not draw
+                render_alarm_vignette(painter, rect, 0.0);
+                render_alarm_vignette(painter, rect, -0.5);
+
+                // Test intensity > 0.0 renders successfully
+                render_alarm_vignette(painter, rect, 0.75);
+                render_alarm_vignette(painter, rect, 1.0);
+            });
+        });
+    }
+}
+
 
