@@ -24,6 +24,7 @@ pub struct HubApp {
     search_query: String,
     selected_severity: String,
     selected_node: Option<String>,
+    pub selected_incident: Option<HubIncident>,
     server_addr: String,
     toast_msg: Option<(String, Instant)>,
     last_db_refresh: Instant,
@@ -60,6 +61,7 @@ impl HubApp {
             search_query: String::new(),
             selected_severity: "TODAS".to_string(),
             selected_node: None,
+            selected_incident: None,
             server_addr,
             toast_msg: None,
             last_db_refresh: Instant::now(),
@@ -166,7 +168,11 @@ impl eframe::App for HubApp {
                         &mut self.selected_severity,
                         &self.selected_node,
                         &mut self.toast_msg,
+                        &mut self.selected_incident,
                     );
+                }
+                ViewTab::ThreatMap => {
+                    ui.label("Threat map view placeholder");
                 }
                 ViewTab::Correlations => {
                     render_correlations_view(ui, &self.correlations, &mut self.toast_msg);
@@ -176,5 +182,14 @@ impl eframe::App for HubApp {
                 }
             }
         });
+
+        // Forensic Raio-X Modal
+        if let Some(inc) = &self.selected_incident {
+            let mut close = false;
+            crate::ui::modal::render_raio_x_modal(ctx, inc, &mut close, &mut self.toast_msg);
+            if close {
+                self.selected_incident = None;
+            }
+        }
     }
 }

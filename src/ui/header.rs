@@ -7,6 +7,7 @@ use egui::{Color32, RichText, Stroke, Ui};
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ViewTab {
     Incidents,
+    ThreatMap,
     Correlations,
     Analytics,
 }
@@ -41,9 +42,9 @@ pub fn render_header(
                 });
 
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    // Status badge for server
+                    // Status badge for server with live pulse indicator
                     ui.label(
-                        RichText::new(format!("🟢 Ingestão: {}", server_addr))
+                        RichText::new(format!("🟢 [60 FPS | Ingestão: {}]", server_addr))
                             .size(11.0)
                             .color(COLOR_ACCENT_GREEN),
                     );
@@ -116,6 +117,15 @@ pub fn render_header(
                     *current_tab == ViewTab::Incidents,
                 ) {
                     *current_tab = ViewTab::Incidents;
+                }
+
+                if tab_button(
+                    ui,
+                    "🗺️ Threat Map",
+                    ViewTab::ThreatMap,
+                    *current_tab == ViewTab::ThreatMap,
+                ) {
+                    *current_tab = ViewTab::ThreatMap;
                 }
 
                 if tab_button(
