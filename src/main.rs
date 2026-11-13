@@ -1,5 +1,6 @@
 pub mod alerts;
 pub mod app;
+pub mod campaigns;
 pub mod correlation;
 pub mod db;
 pub mod models;
