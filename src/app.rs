@@ -2,6 +2,7 @@ use crate::correlation::CorrelationEngine;
 use crate::db::Database;
 use crate::models::{AgentNode, CorrelationAlert, HubIncident};
 use crate::server::HubEvent;
+use crate::threat_intel::ThreatIntelFeed;
 use crate::ui::header::{render_header, ViewTab};
 use crate::ui::sidebar::render_sidebar;
 use crate::ui::views::analytics::render_analytics_view;
@@ -17,6 +18,7 @@ pub struct HubApp {
     db: Database,
     event_rx: Receiver<HubEvent>,
     correlation_engine: CorrelationEngine,
+    threat_intel: ThreatIntelFeed,
     nodes: Vec<AgentNode>,
     incidents: Vec<HubIncident>,
     correlations: Vec<CorrelationAlert>,
@@ -74,6 +76,7 @@ impl HubApp {
             db,
             event_rx,
             correlation_engine,
+            threat_intel: ThreatIntelFeed::default(),
             nodes,
             incidents,
             correlations,
@@ -130,7 +133,8 @@ impl eframe::App for HubApp {
         while let Ok(event) = self.event_rx.try_recv() {
             new_event = true;
             match event {
-                HubEvent::NewIncident(inc) => {
+                HubEvent::NewIncident(mut inc) => {
+                    self.threat_intel.enrich_incident(&mut inc);
                     self.correlation_engine.process_incident(&inc);
                     let target_geo = self
                         .nodes
@@ -149,6 +153,7 @@ impl eframe::App for HubApp {
                     }
                     if inc.severity.to_uppercase() == "CRÍTICO" || inc.severity.to_uppercase() == "CRITICO" {
                         self.last_critical_alert = Some(Instant::now());
+                        crate::ui::header::play_audio_alert_if_enabled(ctx);
                     }
                     self.incidents.insert(0, inc);
                     if self.incidents.len() > 1000 {
