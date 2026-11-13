@@ -10,27 +10,48 @@
 
 1. **Dashboard Nativo em Rust Puro (`egui` / `eframe`):**
    - Renderização fluida a 60 FPS com zero consumo de Chromium/Electron/Node.js.
-   - Tema *Dark Cyber SOC* elegante (ardósia `#0D1117`, ciano, âmbar e badges coloridos).
+   - Tema *Dark Cyber SOC* elegante (ardósia `#0D1117`, ciano, âmbar e badges coloridos com efeito pill glow).
    - Filtragem e pesquisa instantânea por IP, porta, serviço, severidade e nó.
+   - Ordenação dinâmica e interativa das tabelas com um clique nos cabeçalhos.
 
-2. **Motor de Correlação Multi-Host (SIEM):**
-   - Agrupa ataques na janela deslizante (ex: 10 minutos).
-   - Quando um atacante atinge **2 ou mais máquinas distintas**, é disparado um alerta correlacionado com pontuação de ameaça acumulada (+15 de bónus multi-host) e mapeamento MITRE ATT&CK (`T1046` e `T1110`).
+2. **🗺️ 2D Threat Map Vetorial em Tempo Real:**
+   - Mapa-múndi vetorial procedimental em coordenadas equirretangulares (zero dependência de tiles online, 100% offline).
+   - Beacons dos nós SOC (Portugal, Alemanha, etc.) com anéis de radar pulsantes a 60 FPS.
+   - Arcos de trajetória balística em curvas de Bezier quadráticas ligando os atacantes aos nós sob ataque.
+   - Partículas de energia e feixes com cauda de velocidade, coloridos pela severidade do incidente.
+   - Detetor especial para tráfego privado / Wi-Fi local (RFC 1918) com órbitas visuais e etiqueta `LAN/Wi-Fi`.
+   - Painel flutuante HUD (*Heads-Up Display*) no canto inferior com os últimos ataques em direto.
 
-3. **Ingestão Assíncrona de Telemetria (`tokio`):**
+3. **🔬 Modal de Raio-X Forense:**
+   - Janela flutuante interativa com visualizador canónico de hexdump alinhado a 16 bytes (`00000000 53 53 48 ... |SSH...|`).
+   - Mapeamento automático de técnicas **MITRE ATT&CK®** (`T1110.001 Brute Force`, `T1046 Scanning`, `T1071.004 DNS Tunneling`, `T1486 Ransomware`, `T1021 Remote Desktop/Services`).
+   - Atribuição geográfica offline, hostname rDNS, ISP e detalhes do socket.
+   - Ações imediatas: botão `[🚫 Banir IP]` (copia regra de `iptables` pronta e gera notificação) e `[📋 Copiar JSON]`.
+
+4. **⚡ Grafo Radial de Ataques Distribuídos (SIEM):**
+   - Visualização topológica vetorial de ataques multi-host: o IP atacante fica no centro com anéis de radar e vetores laser em direção aos nós visados em simultâneo.
+   - Agrupamento em janelas deslizantes (ex: 10 minutos) que identifica campanhas coordenadas de varrimento.
+   - Interatividade total: passar o cursor mostra o estado do nó e dos serviços; clicar copia o IP atacante com feedback toast.
+
+5. **📊 Visualização Gráfica & Métricas (`egui_plot`):**
+   - Linha temporal contínua dos ataques com suporte a zoom e pan interativo do rato.
+   - Matriz visual MITRE ATT&CK com cartões e barras de progresso coloridas pelas técnicas mais observadas.
+   - Distribuição percentual dos serviços e protocolos mais visados (SSH, HTTP, SMB, DNS, etc.).
+
+6. **🚨 Alertas Visuais & Relatórios Executivos SOC:**
+   - Vinheta suave pulsante a vermelho vivo nas margens do ecrã quando ocorre um incidente de severidade `CRÍTICO`.
+   - Botão **`[ 📄 Relatório SOC ]`**: gera e exporta relatórios executivos estruturados em Markdown e JSON com o sumário de incidentes, atacantes de topo e matriz de remediação.
+
+7. **Ingestão Assíncrona de Telemetria (`tokio`):**
    - Listener HTTP/JSON ultraleve a escutar por padrão em `0.0.0.0:8765`.
    - Rotas dedicadas:
      - `POST /api/v1/incident`: Registo atómico de incidentes e envio imediato para a UI via canais cross-thread.
      - `POST /api/v1/heartbeat`: Registo automático de novos nós e telemetria de presença (*keepalive*).
      - `GET /api/v1/health`: Verificação de saúde da API.
 
-4. **Armazenamento Forense Robusto (SQLite WAL):**
+8. **Armazenamento Forense Robusto (SQLite WAL):**
    - Base de dados local em `~/.local/share/sentinela-hub/sentinela_hub.db`.
    - Modo WAL (*Write-Ahead Logging*) com `synchronous = NORMAL` para garantir persistência imediata sem bloquear leituras da interface gráfica.
-
-5. **Visualização Gráfica & Métricas (`egui_plot`):**
-   - Timeline interativa da severidade e frequência temporal dos ataques.
-   - Ranking do *Top Atacantes Globais* e distribuição percentual dos serviços mais sondados (SSH, HTTP, SMB, DNS, etc.).
 
 ---
 
