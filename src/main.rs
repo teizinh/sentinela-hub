@@ -3,6 +3,7 @@ pub mod app;
 pub mod campaigns;
 pub mod correlation;
 pub mod db;
+pub mod mitre_matrix;
 pub mod models;
 pub mod remote_mitigation;
 pub mod server;
