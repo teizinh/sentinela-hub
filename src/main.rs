@@ -4,6 +4,7 @@ pub mod campaigns;
 pub mod correlation;
 pub mod db;
 pub mod models;
+pub mod remote_mitigation;
 pub mod server;
 pub mod threat_intel;
 pub mod ui;
