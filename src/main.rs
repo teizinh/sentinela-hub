@@ -2,6 +2,7 @@ pub mod alerts;
 pub mod app;
 pub mod correlation;
 pub mod db;
+pub mod mitre_matrix;
 pub mod models;
 pub mod server;
 pub mod threat_intel;
