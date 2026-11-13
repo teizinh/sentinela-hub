@@ -1,8 +1,25 @@
 use super::{
-    COLOR_ACCENT_AMBER, COLOR_ACCENT_CYAN, COLOR_ACCENT_GREEN, COLOR_ACCENT_RED, COLOR_BORDER,
-    COLOR_PANEL_BG, COLOR_TEXT_MUTED,
+    apply_soc_theme, SocTheme, COLOR_ACCENT_AMBER, COLOR_ACCENT_CYAN, COLOR_ACCENT_GREEN,
+    COLOR_ACCENT_RED, COLOR_BORDER, COLOR_PANEL_BG, COLOR_TEXT_MUTED,
 };
 use egui::{Color32, RichText, Stroke, Ui};
+
+/// Returns the current active SOC theme from context memory
+pub fn get_soc_theme(ctx: &egui::Context) -> SocTheme {
+    ctx.data_mut(|d| d.get_temp::<SocTheme>(egui::Id::new("soc_theme_state")).unwrap_or_default())
+}
+
+/// Returns whether audio alert notifications are currently enabled
+pub fn is_audio_alert_enabled(ctx: &egui::Context) -> bool {
+    ctx.data_mut(|d| d.get_temp::<bool>(egui::Id::new("soc_sound_alert_state")).unwrap_or(true))
+}
+
+/// Emits an audio bell alert if audio notifications are currently enabled
+pub fn play_audio_alert_if_enabled(ctx: &egui::Context) {
+    if is_audio_alert_enabled(ctx) {
+        print!("\x07");
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ViewTab {
@@ -160,7 +177,96 @@ pub fn render_header(
                     {
                         *export_report = true;
                     }
+
+                    ui.separator();
+
+                    // Audio alert toggle button: [ 🔔 Som: ON / OFF ]
+                    let sound_id = egui::Id::new("soc_sound_alert_state");
+                    let sound_on = ui.data_mut(|d| d.get_temp::<bool>(sound_id).unwrap_or(true));
+                    let sound_label = format!("🔔 Som: {}", if sound_on { "ON" } else { "OFF" });
+                    let sound_color = if sound_on {
+                        COLOR_ACCENT_GREEN
+                    } else {
+                        COLOR_TEXT_MUTED
+                    };
+                    if ui
+                        .button(
+                            RichText::new(sound_label)
+                                .size(11.0f32)
+                                .strong()
+                                .color(sound_color),
+                        )
+                        .on_hover_text(if sound_on {
+                            "Alertas sonoros ativados (clique para silenciar)"
+                        } else {
+                            "Alertas sonoros silenciados (clique para ativar)"
+                        })
+                        .clicked()
+                    {
+                        ui.data_mut(|d| d.insert_temp(sound_id, !sound_on));
+                    }
+
+                    ui.separator();
+
+                    // Theme cycler button: [ 🎨 {theme.label()} ]
+                    let theme_id = egui::Id::new("soc_theme_state");
+                    let current_theme = ui.data_mut(|d| d.get_temp::<SocTheme>(theme_id).unwrap_or_default());
+                    let theme_label = format!("🎨 {}", current_theme.label());
+                    if ui
+                        .button(
+                            RichText::new(theme_label)
+                                .size(11.0f32)
+                                .strong()
+                                .color(COLOR_ACCENT_CYAN),
+                        )
+                        .on_hover_text("Alternar tema SOC (Cyber Slate -> Matrix Green -> Crimson SOC)")
+                        .clicked()
+                    {
+                        let next_theme = current_theme.next();
+                        apply_soc_theme(ui.ctx(), next_theme);
+                        ui.data_mut(|d| d.insert_temp(theme_id, next_theme));
+                    }
                 });
             });
         });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_render_header_theme_and_sound_controls() {
+        let ctx = egui::Context::default();
+        let mut current_tab = ViewTab::Incidents;
+        let mut export_report = false;
+
+        let _ = ctx.run(Default::default(), |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| {
+                render_header(
+                    ui,
+                    &mut current_tab,
+                    5,
+                    42,
+                    3,
+                    "127.0.0.1:514",
+                    &mut export_report,
+                );
+            });
+        });
+
+        // Default theme and audio state
+        assert_eq!(get_soc_theme(&ctx), SocTheme::CyberSlate);
+        assert!(is_audio_alert_enabled(&ctx));
+
+        // Test theme mutation in context
+        let theme_id = egui::Id::new("soc_theme_state");
+        ctx.data_mut(|d| d.insert_temp(theme_id, SocTheme::MatrixGreen));
+        assert_eq!(get_soc_theme(&ctx), SocTheme::MatrixGreen);
+
+        // Test sound mutation in context
+        let sound_id = egui::Id::new("soc_sound_alert_state");
+        ctx.data_mut(|d| d.insert_temp(sound_id, false));
+        assert!(!is_audio_alert_enabled(&ctx));
+    }
 }
