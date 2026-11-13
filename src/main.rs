@@ -3,6 +3,7 @@ pub mod correlation;
 pub mod db;
 pub mod models;
 pub mod server;
+pub mod threat_intel;
 pub mod ui;
 
 use app::HubApp;
