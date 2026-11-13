@@ -1,3 +1,4 @@
+pub mod alerts;
 pub mod app;
 pub mod correlation;
 pub mod db;
