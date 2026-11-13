@@ -5,6 +5,7 @@ pub mod correlation;
 pub mod db;
 pub mod mitre_matrix;
 pub mod models;
+pub mod node_telemetry;
 pub mod remote_mitigation;
 pub mod server;
 pub mod stix;
