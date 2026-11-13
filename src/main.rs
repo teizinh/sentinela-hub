@@ -7,6 +7,7 @@ pub mod mitre_matrix;
 pub mod models;
 pub mod remote_mitigation;
 pub mod server;
+pub mod stix;
 pub mod threat_intel;
 pub mod ui;
 
