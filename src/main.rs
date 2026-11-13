@@ -3,6 +3,7 @@ pub mod app;
 pub mod correlation;
 pub mod db;
 pub mod models;
+pub mod node_telemetry;
 pub mod server;
 pub mod threat_intel;
 pub mod ui;
